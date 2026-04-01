@@ -293,6 +293,9 @@ fn build(
 
     let mut current: Configuration = Configuration::new();
     let mut is_glob = true;
+    if !args.contains(&"--".to_string()) {
+        is_glob = false;
+    }
     for i in &args[1..] {
         if is_glob &&i == "--" {
             is_glob = false;
