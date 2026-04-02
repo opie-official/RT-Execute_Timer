@@ -1,49 +1,65 @@
+pub mod build_command;
+pub mod types;
+
+use build_command::build_configurations;
+use std::collections::HashMap;
 use std::env;
 use std::process::{Command, Stdio};
 use std::time::Instant;
-
-fn print_help() {
-    println!("Usage: rt -c=\"<command with args>\"");
-}
-#[derive(Debug, Clone, PartialEq)]
-struct Configuration {
-    options: Vec<Vec<String>>,
-    command: String,
-}
-
-impl Configuration {
-    fn new() -> Configuration {
-        Self {
-            options: Vec::new(),
-            command: String::new(),
-        }
-    }
-    fn clear(&mut self) {
-        self.options.clear();
-        self.command.clear();
-    }
-}
-
-#[derive(Clone)]
-enum GeneralOption<T> where T: Clone {
-    None,
-    Some(T),
-}
-
+use types::{Configuration, GeneralOption, TimeOrdering};
 const SEPARATOR: &str = "______________________________________________";
 const SEPARATOR2: &str = "-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-";
 
-fn spawn(conf: &Configuration, time_m: &Vec<&str>, proc_m: &Vec<(&str, &str)>,
-         min: &GeneralOption<()>,
-         err: &GeneralOption<()>,
-         proc: &GeneralOption<String>,
-         time: &GeneralOption<String>) {
+fn print_help() {
+
+    println!("Usage: rt <-keys> -c=\"<command with args>\"");
+    println!("Keys:");
+    println!("-min                          -- turns of stdout and stderr of process");
+    println!("-err                          -- turns of stdout of process only (stdout turning on)");
+    println!("-time=<val>                   -- sets a measure of execution time (can be ms, s, m, h)");
+    println!("-proc=<val>                   -- sets the command interpreter of process (can be bash, sh, zsh, cmd, powershell)");
+    println!("-test_time=<oper:val:measure> -- Tests the execution time. The first parameter specifies the comparison operation (<, <=, >, >=, ==, !=); The second parameter is the value against which the execution time is compared; The third parameter specifies the unit of measurement for the second parameter.");
+    println!("-c=<\"val\">                  -- Command that will be executed and their execution time will be measured");
+    println!("--                            -- Separates global keys (which apply to all commands) from local keys (Optional if there are no global keys)");
+    println!("\nExamples:\n\
+     rt -time=\"s\" -- -c=\"echo Hello\" -c=\"mkdir dir\"\n\
+     rt -c=\"touch file.txt\"\n\
+     rt -proc=\"sh\" -c=\"yes \"yes, this is a string\" | head -n 10\"");
+}
+
+fn parse_time(time: f64, from: &str, to: &str) -> f64 {
+    if from == to {
+        return time;
+    }
+    let map: HashMap<&str, f64> = HashMap::from([
+        ("ms", 1000.0),
+        ("s", 60.0),
+        ("m", 60.0 * 1000.0),
+        ("h", 60.0 * 1000.0 * 60.0),
+    ]);
+    if from=="ms"{
+        return time/map[to];
+    }
+    let in_ms = time * map[from];
+    in_ms / map[to]
+}
+
+fn spawn(
+    conf: &Configuration,
+    time_m: &Vec<&str>,
+    proc_m: &Vec<(&str, &str)>,
+    min: &GeneralOption<()>,
+    err: &GeneralOption<()>,
+    proc: &GeneralOption<String>,
+    time: &GeneralOption<String>,
+    test_time: &GeneralOption<(TimeOrdering, f64, String)>,
+) {
     println!("{SEPARATOR}\nCommand \"{}\"", conf.command);
     let mut min: GeneralOption<()> = min.clone();
     let mut err: GeneralOption<()> = err.clone();
     let mut proc: GeneralOption<String> = proc.clone();
     let mut time: GeneralOption<String> = time.clone();
-    // let mut test_time: GeneralOption<(String, i32, String)> = GeneralOption::None;
+    let mut test_time: GeneralOption<(TimeOrdering, f64, String)> = test_time.clone();
     for i in conf.options.iter() {
         if i.contains(&"-min".to_string()) {
             min = GeneralOption::Some(());
@@ -57,14 +73,59 @@ fn spawn(conf: &Configuration, time_m: &Vec<&str>, proc_m: &Vec<(&str, &str)>,
             if i.len() >= 2 {
                 proc = GeneralOption::Some(i[1].clone());
             }
-        } /*else if i.contains(&"-test-time".to_string()) {
+        } else if i.contains(&"-test-time".to_string()) {
             if i.len() >= 4 {
-                if i[2].parse::<i32>().is_ok() {
-                    test_time =
-                        GeneralOption::Some((i[1].clone(), i[2].parse().unwrap(), i[3].clone()));
+                match i[3].as_str() {
+                    "ms"=>(),
+                    "s"=>(),
+                    "m"=>(),
+                    "h"=>(),
+                    _=>{
+                        println!("Invalid time measure {}. Skipping", i[3]);
+                        return;
+                    }
+                }
+                if i[2].parse::<f64>().is_ok() {
+                    test_time = match i[1].as_str() {
+                        ">" => GeneralOption::Some((
+                            TimeOrdering::GT,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        "<" => GeneralOption::Some((
+                            TimeOrdering::LT,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        ">=" => GeneralOption::Some((
+                            TimeOrdering::GE,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        "<=" => GeneralOption::Some((
+                            TimeOrdering::LE,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        "==" => GeneralOption::Some((
+                            TimeOrdering::EQ,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        "!=" => GeneralOption::Some((
+                            TimeOrdering::NE,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                        _ => GeneralOption::Some((
+                            TimeOrdering::EQ,
+                            i[2].parse().unwrap(),
+                            i[3].clone(),
+                        )),
+                    };
                 }
             }
-        }*/
+        }
     }
 
     match &proc {
@@ -91,20 +152,6 @@ fn spawn(conf: &Configuration, time_m: &Vec<&str>, proc_m: &Vec<(&str, &str)>,
         }
         _ => (),
     }
-
-    /*match &test_time {
-        GeneralOption::Some((op, _, measure)) => {
-            if !op_m.contains(&op.as_str()) {
-                println!("incorrect operator: {}", op);
-                return;
-            }
-            if !time_m.contains(&measure.as_str()) {
-                println!("incorrect time measure: {}", measure);
-                return;
-            }
-        }
-        _ => (),
-    }*/
 
     let mut command: Command = Command::new("");
     if cfg!(target_os = "windows") {
@@ -175,6 +222,7 @@ fn spawn(conf: &Configuration, time_m: &Vec<&str>, proc_m: &Vec<(&str, &str)>,
     let _time = Instant::now();
     let code = command.status().unwrap();
     let elapsed = _time.elapsed();
+
     let time_v = match &time {
         GeneralOption::Some(v) if v == "s" => elapsed.as_secs_f64(),
         GeneralOption::Some(v) if v == "m" => elapsed.as_secs_f64() / 60.0,
@@ -198,13 +246,75 @@ fn spawn(conf: &Configuration, time_m: &Vec<&str>, proc_m: &Vec<(&str, &str)>,
         "Program \"{}\" executed at {time_v}{measure_time} with {code}",
         conf.command
     );
+
+    match test_time{
+        GeneralOption::None=>(),
+        GeneralOption::Some((oper, val, measure))=>{
+            let time_measure = match &time{
+                GeneralOption::Some(v) => v,
+                _=> "ms"
+            };
+            let time_parsed = parse_time(time_v, time_measure, measure.as_str());
+            match &oper{
+                TimeOrdering::GT=>{
+                    let op = time_parsed > val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} > {val}{measure} ({} difference)", time_parsed-val);
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} <= {val}{measure} ({} difference)", val-time_parsed);
+                    }
+                },TimeOrdering::LT=>{
+                    let op = time_parsed < val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} < {val}{measure} ({} difference)", -time_parsed+val);
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} >= {val}{measure} ({} difference)", -val+time_parsed);
+                    }
+                },TimeOrdering::GE=>{
+                    let op = time_parsed >= val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} >= {val}{measure} ({} difference)", time_parsed-val);
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} < {val}{measure} ({} difference)", val-time_parsed);
+                    }
+                },TimeOrdering::LE=>{
+                    let op = time_parsed <= val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} <= {val}{measure} ({} difference)", -time_parsed+val);
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} > {val}{measure} ({} difference)", -val+time_parsed);
+                    }
+                },TimeOrdering::EQ=>{
+                    let op = time_parsed == val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} == {val}{measure}");
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} != {val}{measure} ({} difference)", time_parsed-val);
+                    }
+                },TimeOrdering::NE=>{
+                    let op = time_parsed != val;
+                    if op{
+                        println!("** Time test was passed! {time_parsed}{measure} != {val}{measure} ({} difference)", time_parsed-val);
+
+                    }else{
+                        println!("!! Time test was not passed! {time_parsed}{measure} == {val}{measure}");
+                    }
+                },
+            }
+        }
+    }
 }
 
 fn parse_args(args: &Vec<String>) {
     let mut configurations: Vec<Configuration> = Vec::new();
     let mut glob_args: Vec<Vec<String>> = Vec::new();
-    build(&args, &mut configurations, &mut glob_args);
-    println!("start executing...\n{SEPARATOR}");
+    build_configurations(&args, &mut configurations, &mut glob_args);
+    println!("start executing...");
 
     let time_measure = vec!["ms", "s", "m", "h"];
     let proc_measure = vec![
@@ -217,11 +327,11 @@ fn parse_args(args: &Vec<String>) {
 
     //let op_measure = vec!["<", ">", "<=", ">=", "==", "!="];
 
-
     let mut min: GeneralOption<()> = GeneralOption::None;
     let mut err: GeneralOption<()> = GeneralOption::None;
     let mut proc: GeneralOption<String> = GeneralOption::None;
     let mut time: GeneralOption<String> = GeneralOption::None;
+    let mut test_time: GeneralOption<(TimeOrdering, f64, String)> = GeneralOption::None;
 
     for i in glob_args {
         if i.contains(&"-min".to_string()) {
@@ -240,99 +350,39 @@ fn parse_args(args: &Vec<String>) {
                 time = GeneralOption::Some(i[1].clone());
             }
         }
-    }
-
-    for i in &configurations {
-        spawn(&i, &time_measure, &proc_measure, &min, &err, &proc, &time);
-    }
-}
-
-fn parse_arg(container: &mut Vec<String>, i: &String, keys: &Vec<&str>) -> bool {
-    let index = i.find("=");
-    if index.is_some() {
-        let first = &i[..index.unwrap()];
-        let second = &i[index.unwrap() + 1..];
-        if !keys.contains(&first.trim()) {
-            println!("Key {first} doesn`t exist. Skip");
-            return false;
-        }
-        if second.len() == 0 {
-            println!("Value of key {first} is empty. Skip");
-            return false;
-        }
-        if second.trim().contains(":") {
-            let splited: Vec<&str> = second.trim().split(":").collect();
-            container.push(first.trim().to_string());
-            for i in splited.iter() {
-                container.push(i.trim().to_string());
-            }
-        } else {
-            container.push(first.trim().to_string());
-            container.push(second.trim().to_string());
-        }
-    } else {
-        container.push(i.trim().to_string());
-    }
-    true
-}
-
-fn build(
-    args: &Vec<String>,
-    configurations: &mut Vec<Configuration>,
-    glob_args: &mut Vec<Vec<String>>,
-) {
-    let keys: Vec<&str> = vec![
-        "-f",
-        "-proc",
-        "-time",
-        "-min",
-        "-err",
-        "--",
-        "-c",
-    ];
-
-    let mut current: Configuration = Configuration::new();
-    let mut is_glob = true;
-    if !args.contains(&"--".to_string()) {
-        is_glob = false;
-    }
-    for i in &args[1..] {
-        if is_glob &&i == "--" {
-            is_glob = false;
-        }
-        if !is_glob &&i == "--" {
-            continue;
-        }
-        if is_glob {
-            let mut _arg: Vec<String> = Vec::new();
-            let res = parse_arg(&mut _arg, &i, &keys);
-            if res {
-                glob_args.push(_arg);
-            }
-        } else {
-            let mut _arg: Vec<String> = Vec::new();
-            let res = parse_arg(&mut _arg, &i, &keys);
-
-            if res {
-                if i.starts_with("-c") {
-                    if _arg.len() == 2 {
-                        current.command = _arg[1].clone();
-                        configurations.push(current.clone());
-                        current.clear();
-                    } else {
-                        println!("Invalid option {i}");
-                        current.clear();
-                        continue;
+        if i.contains(&"-test-time".to_string()) {
+            if i.len() == 3 {
+                let ordering = match i[0].as_str() {
+                    "==" => TimeOrdering::EQ,
+                    "!=" => TimeOrdering::NE,
+                    "=>" => TimeOrdering::GE,
+                    "<=" => TimeOrdering::LE,
+                    "<" => TimeOrdering::LT,
+                    ">" => TimeOrdering::GT,
+                    _ => TimeOrdering::EQ,
+                };
+                let time_ = i[1].parse::<f64>();
+                if time_.is_ok() {
+                    let measure_ = i[2].clone();
+                    if ["ms", "s", "m", "h"].contains(&measure_.as_str()) {
+                        test_time = GeneralOption::Some((ordering, time_.unwrap(), measure_));
                     }
-                } else {
-                    current.options.push(_arg);
                 }
             }
         }
     }
 
-    if !current.command.is_empty() {
-        configurations.push(current);
+    for i in &configurations {
+        spawn(
+            &i,
+            &time_measure,
+            &proc_measure,
+            &min,
+            &err,
+            &proc,
+            &time,
+            &test_time,
+        );
     }
 }
 
