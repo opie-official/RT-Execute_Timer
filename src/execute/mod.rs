@@ -47,7 +47,7 @@ fn parse_time(time: f64, from: &str, to: &str) -> f64 {
     }
     let map: HashMap<&str, f64> = HashMap::from([
         ("ms", 1000.0),
-        ("s", 60.0),
+        ("s", 1000.0),
         ("m", 60.0 * 1000.0),
         ("h", 60.0 * 1000.0 * 60.0),
     ]);

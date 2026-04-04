@@ -2,9 +2,8 @@ use crate::conf::{SEPARATOR, SEPARATOR2};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{thread};
 use std::time::{Duration, Instant};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 ///
 /// Raw representation of command configuration
@@ -174,7 +173,7 @@ impl MyCommand {
     /// 
     pub fn run(&mut self, one_line: bool) -> ProcessResult {
         let mut cmd = self.command.spawn().unwrap();
-        let pid = Pid::from(cmd.id() as usize);
+        let pid = cmd.id();
 
         let running_arg = Arc::new(AtomicBool::new(true));
         let running_clone = running_arg.clone();
@@ -195,38 +194,19 @@ impl MyCommand {
         }
 
         let monitor = thread::spawn(move || {
-            let mut system = System::new();
+            // let mut system = System::new();
             while running_clone.load(Ordering::Relaxed) {
-                let kind = ProcessRefreshKind::nothing().with_memory().without_tasks();
-                system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, kind);
-                #[cfg(not(target_os = "windows"))]
-                {
-                    if let Some(proc) = system.process(pid) {
-                        let mem = proc.memory();
-                        if mem < 10_000_000 {
-                            let mut sum = sum_mem_clone.lock().unwrap();
-                            let mut peak = peak_mem_clone.lock().unwrap();
-                            if *peak < mem {
-                                *peak = mem;
-                            }
-                            *sum += mem;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    if let Some(mem)=measure_memory(pid.as_u32()){
-                        if mem < 10_000_000 {
-                            let mut sum = sum_mem_clone.lock().unwrap();
-                            let mut peak = peak_mem_clone.lock().unwrap();
+                // let kind = ProcessRefreshKind::nothing().with_memory().without_tasks();
+                // system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, kind);
+                if let Some(mem) = measure_memory(pid){
+                    if mem <1_000_000 {
+                        let mut sum = sum_mem_clone.lock().unwrap();
+                        let mut peak = peak_mem_clone.lock().unwrap();
 
-                            if *peak < mem {
-                                *peak = mem;
-                            }
-                            *sum += mem;
+                        if *peak < mem {
+                            *peak = mem;
                         }
+                        *sum += mem;
                     }
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -286,4 +266,23 @@ fn measure_memory(pid: u32) ->Option<u64>{
         }
     }
     None
+}
+
+
+#[cfg(target_os = "linux")]
+fn measure_memory(pid: u32) -> Option<u64>{
+    use std::fs;
+    let context = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+    for line in context.lines() {
+        if line.starts_with("VmRSS:"){
+            let parts = line.split_whitespace().collect::<Vec<&str>>();
+            return parts.get(1)?.parse::<u64>().ok();
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn measure_memory(pid: u32) -> Option<u64>{
+    Some(0)
 }
