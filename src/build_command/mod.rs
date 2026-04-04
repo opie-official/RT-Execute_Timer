@@ -1,4 +1,8 @@
 use crate::types::Configuration;
+use crate::conf::POSSIBLE;
+
+
+
 
 ///
 /// Parses argument and build configurations for commands
@@ -12,17 +16,7 @@ pub fn build_configurations(
     configurations: &mut Vec<Configuration>,
     glob_args: &mut Vec<Vec<String>>,
 ) {
-    let keys: Vec<&str> = vec![
-        "-f",
-        "-proc",
-        "-time",
-        "-min",
-        "-err",
-        "--",
-        "-c",
-        "-test-time",
-    ];
-
+       
     let mut current: Configuration = Configuration::new();
     let mut is_glob = true;
     if !args.contains(&"--".to_string()) {
@@ -37,13 +31,13 @@ pub fn build_configurations(
         }
         if is_glob {
             let mut _arg: Vec<String> = Vec::new();
-            let res = parse_arg(&mut _arg, &i, &keys);
+            let res = parse_arg(&mut _arg, &i);
             if res {
                 glob_args.push(_arg);
             }
         } else {
             let mut _arg: Vec<String> = Vec::new();
-            let res = parse_arg(&mut _arg, &i, &keys);
+            let res = parse_arg(&mut _arg, &i);
 
             if res {
                 if i.starts_with("-c") {
@@ -79,12 +73,12 @@ pub fn build_configurations(
 /// - true - without errors
 /// - false - parse errors (argument will be skipped)
 ///
-fn parse_arg(container: &mut Vec<String>, i: &String, keys: &Vec<&str>) -> bool {
+fn parse_arg(container: &mut Vec<String>, i: &String) -> bool {
     let index = i.find("=");
     if index.is_some() {
         let first = &i[..index.unwrap()];
         let second = &i[index.unwrap() + 1..];
-        if !keys.contains(&first.trim()) {
+        if !POSSIBLE.contains(&first.trim()) {
             println!("Key {first} doesn`t exist. Skip");
             return false;
         }
